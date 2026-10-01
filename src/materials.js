@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { saveEbookAsPdf, trackPageImages } from './ebook.js';
+import { saveEbookAsPdf, trackContextRequests, trackPageImages } from './ebook.js';
 import { evaluateSafe } from './evaluate.js';
 import { isPageImageUrl, sanitizeFileName } from './pattern.js';
 
@@ -185,7 +185,8 @@ async function clickAndFollow(page, context, locator) {
   const { popup = null, download = null } = (await outcome) ?? {};
   if (popup) {
     await popup.waitForLoadState('domcontentloaded').catch(() => {});
-    await settle(popup);
+    // 뷰어는 계속 통신하는 경우가 많아 networkidle 을 오래 기다리지 않는다.
+    await popup.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
   } else {
     await settle(page);
   }
@@ -234,18 +235,27 @@ async function markEbookLinks(detail) {
 
 /** 상세 페이지의 링크 하나를 눌러 뷰어를 열고 PDF 로 저장한다. */
 async function openEbookFromDetail(detail, context, config, locator, title, opts) {
-  const result = await clickAndFollow(detail, context, locator);
-  if (result.download) return saveDownload(result.download, config, title);
-  const viewer = result.popup ?? detail;
-  const seen = result.popup ? trackPageImages(result.popup) : result.seenSame;
+  // 팝업이 열리는 순간의 요청부터 놓치지 않도록 클릭 전에 기록을 시작한다.
+  const tracker = trackContextRequests(context);
   try {
-    await saveEbookAsPdf(viewer, context, config, { seen, titleHint: title, ...opts });
+    const result = await clickAndFollow(detail, context, locator);
+    if (result.download) return saveDownload(result.download, config, title);
+    const viewer = result.popup ?? detail;
+    if (result.popup) console.log('   🪟 뷰어 창 열림');
+    try {
+      await saveEbookAsPdf(viewer, context, config, {
+        seen: tracker.pageImages, imageLike: tracker.imageLike, titleHint: title, ...opts,
+      });
+    } finally {
+      if (result.popup) await result.popup.close().catch(() => {});
+    }
+    // 같은 탭에서 뷰어로 넘어갔으면 상세 페이지로 돌아온다.
+    if (!result.popup) await detail.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
   } finally {
-    if (result.popup) await result.popup.close().catch(() => {});
+    tracker.dispose();
   }
-  // 같은 탭에서 뷰어로 넘어갔으면 상세 페이지로 돌아온다.
-  if (!result.popup) await detail.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
 }
+
 
 /** 항목 하나 처리: 제목 클릭 → (뷰어 바로 열림 | 상세 페이지 → eBook 링크) → PDF 저장 */
 async function saveItem(page, context, config, item, opts) {

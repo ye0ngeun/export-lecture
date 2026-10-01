@@ -21,16 +21,55 @@ export function trackPageImages(page) {
   return seen;
 }
 
+const withTimeout = (promise, ms) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+
 async function evaluateInFrames(page, fn) {
   const results = [];
   for (const frame of page.frames()) {
     try {
-      results.push(await evaluateSafe(frame, fn));
+      // 로딩 중인 frame 에서 evaluate 가 오래 걸리는 경우가 있어 시간 제한을 둔다.
+      results.push(await withTimeout(evaluateSafe(frame, fn), 5_000));
     } catch {
-      // 다른 출처 iframe 이거나 이미 사라진 frame
+      // 이미 사라졌거나 응답 없는 frame
     }
   }
   return results;
+}
+
+/** 브라우저 컨텍스트 전체(팝업 포함)의 요청을 팝업이 열리는 순간부터 기록한다. */
+export function trackContextRequests(context) {
+  const pageImages = new Set();
+  const imageLike = new Set();
+  const onRequest = (request) => {
+    const url = request.url();
+    if (isPageImageUrl(url)) pageImages.add(url);
+    if (request.resourceType() === 'image' || /\.(jpe?g|png|webp|gif|svg)(?:[?#]|$)/i.test(url)) imageLike.add(url);
+  };
+  context.on('request', onRequest);
+  return { pageImages, imageLike, dispose: () => context.off('request', onRequest) };
+}
+
+/** 뷰어에서 페이지 이미지를 못 찾았을 때 원인 파악용 정보를 남긴다. */
+async function dumpViewerFailure(page, config, imageLike) {
+  const dir = path.join(config.outputDir, '_debug');
+  await fs.mkdir(dir, { recursive: true });
+  const fromFrames = (await evaluateInFrames(page, () => [
+    ...performance.getEntriesByType('resource').map((e) => e.name),
+    ...Array.from(document.images).map((img) => img.currentSrc || img.src),
+    ...Array.from(document.querySelectorAll('canvas')).map(() => '(canvas 요소 있음)'),
+  ])).flat();
+  const lines = [
+    `뷰어 주소: ${page.url()}`,
+    `프레임: ${page.frames().map((f) => f.url()).join('\n        ')}`,
+    '',
+    '[불러온 이미지/리소스]',
+    ...new Set([...(imageLike ?? []), ...fromFrames]),
+  ];
+  const base = path.join(dir, '03_뷰어_실패');
+  await fs.writeFile(`${base}.txt`, lines.join('\n'));
+  await page.screenshot({ path: `${base}.png` }).catch(() => {});
+  return base;
 }
 
 /** 스니펫과 같은 방식: 네트워크 기록 + performance 엔트리 + <img> 에서 샘플 주소를 찾는다. */
@@ -134,16 +173,24 @@ async function uniquePath(dir, baseName) {
  * @param {Set<string>} seen trackPageImages(page) 결과
  * @returns {Promise<string|null>} 저장된 PDF 경로 (건너뛰면 null)
  */
-export async function saveEbookAsPdf(page, context, config, { seen = new Set(), titleHint = '', force = false } = {}) {
+export async function saveEbookAsPdf(
+  page, context, config, { seen = new Set(), imageLike = null, titleHint = '', force = false } = {}
+) {
   // 1) 뷰어가 첫 페이지 이미지를 불러올 때까지 기다린다.
+  console.log(`   🔍 뷰어에서 페이지 이미지 찾는 중... (최대 30초)  ${page.url()}`);
   let sampleUrl = null;
   for (let waited = 0; waited < 30_000 && !sampleUrl; waited += 1000) {
     sampleUrl = await findSampleImageUrl(page, seen);
     if (!sampleUrl) await sleep(1000);
   }
   if (!sampleUrl) {
-    throw new Error(`페이지 이미지 주소를 찾지 못했습니다: ${page.url()}`);
+    const base = await dumpViewerFailure(page, config, imageLike);
+    throw new Error(
+      `뷰어에서 페이지 이미지 주소를 찾지 못했습니다: ${page.url()}\n` +
+      `   원인 파악용 파일: ${base}.txt / .png  (이 txt 파일 내용을 보내 주세요)`
+    );
   }
+  console.log(`   ✔ 이미지 규칙 발견: ${sampleUrl.replace(/[?#].*$/, '')}`);
 
   const template = parsePageImageUrl(sampleUrl);
   if (!template) throw new Error(`페이지 이미지 번호 규칙을 해석하지 못했습니다: ${sampleUrl}`);
