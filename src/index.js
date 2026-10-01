@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
 import { launchBrowser, createLoggedInContext } from './browser.js';
 import { saveEbookAsPdf, trackPageImages } from './ebook.js';
-import { runMaterials } from './materials.js';
+import { runMaterials, runSync } from './materials.js';
 import { evaluateSafe } from './evaluate.js';
 import { isPageImageUrl, parsePageImageUrl, sanitizeFileName } from './pattern.js';
 
@@ -13,6 +13,7 @@ const HELP = `
 사용법: npm start -- [옵션]
 
 모드 (하나 선택)
+  --sync              courses.json 규칙대로 새로 올라온 교안만 각 폴더에 저장 (npm run sync)
   --materials         학습자료에서 검색 → 제목 필터에 맞는 교안을 전부 PDF 로 저장
                         --keyword <검색어>   (기본: .env SEARCH_KEYWORD, 자바전공)
                         --title <정규식>     (기본: .env TITLE_FILTER, ^16기_자바전공_APS)
@@ -196,6 +197,7 @@ async function main() {
       urls: { type: 'string' },
       discover: { type: 'boolean' },
       materials: { type: 'boolean' },
+      sync: { type: 'boolean' },
       keyword: { type: 'string' },
       title: { type: 'string' },
       'dry-run': { type: 'boolean' },
@@ -213,7 +215,7 @@ async function main() {
     ...(values.url ?? []).map((url) => ({ url, title: '' })),
     ...(values.urls ? await readUrlFile(values.urls) : []),
   ];
-  if (values.help || (!urls.length && !values.discover && !values.watch && !values.materials)) {
+  if (values.help || (!urls.length && !values.discover && !values.watch && !values.materials && !values.sync)) {
     console.log(HELP);
     return;
   }
@@ -232,6 +234,7 @@ async function main() {
   try {
     const { context, page } = await createLoggedInContext(browser, config, { interactive });
     if (values.watch) await runWatch(context, page, config, opts);
+    else if (values.sync) await runSync(context, page, config, { ...opts, dryRun: Boolean(values['dry-run']) });
     else if (values.materials) await runMaterials(context, page, config, { ...opts, dryRun: Boolean(values['dry-run']) });
     else if (values.discover) await runDiscover(context, page, config, opts);
     else await runUrls(context, config, urls, opts);

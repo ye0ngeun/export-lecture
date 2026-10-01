@@ -312,6 +312,100 @@ async function saveItem(page, context, config, item, opts) {
 }
 
 /** 학습자료 모드: 검색 → 제목 필터 → 전부 PDF 저장 */
+/** 폴더에 이 제목으로 저장된 PDF 가 있는지 (eBook 여러 개면 "제목 - eBook이름.pdf") */
+async function alreadySaved(dir, title) {
+  const name = sanitizeFileName(title);
+  const files = await fs.readdir(dir).catch(() => []);
+  return files.some((f) => f === `${name}.pdf` || f.startsWith(`${name} - `));
+}
+
+async function loadCourses(file) {
+  let raw;
+  try {
+    raw = JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch (err) {
+    throw new Error(`${file} 을(를) 읽지 못했습니다: ${err.message}`);
+  }
+  return raw.courses.map((c) => ({
+    folder: sanitizeFileName(c.folder),
+    title: new RegExp(c.title, 'i'),
+    search: c.search || raw.search || '',
+  }));
+}
+
+/** downloads 바로 아래에 있는 PDF 중 규칙에 맞는 것을 해당 폴더로 옮긴다 (예전 방식으로 받은 파일 정리). */
+async function moveLooseFiles(baseDir, courses, dryRun) {
+  const entries = await fs.readdir(baseDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.pdf')) continue;
+    const course = courses.find((c) => c.title.test(entry.name.replace(/\.pdf$/i, '')));
+    if (!course) continue;
+    const targetDir = path.join(baseDir, course.folder);
+    const target = path.join(targetDir, entry.name);
+    if (await fs.access(target).then(() => true, () => false)) continue;
+    if (dryRun) {
+      console.log(`📦 (옮길 예정) ${entry.name}  →  ${course.folder}/`);
+      continue;
+    }
+    await fs.mkdir(targetDir, { recursive: true });
+    await fs.rename(path.join(baseDir, entry.name), target);
+    console.log(`📦 ${entry.name}  →  ${course.folder}/`);
+  }
+}
+
+/** courses.json 규칙대로 전체 목록을 훑어 새로 올라온 교안만 각 폴더에 받는다. */
+export async function runSync(context, page, config, opts) {
+  const courses = await loadCourses(config.coursesFile);
+  const baseDir = config.outputDir;
+  await moveLooseFiles(baseDir, courses, opts.dryRun);
+
+  // 검색어별로 한 번씩만 목록을 훑는다.
+  const searches = [...new Set(courses.map((c) => c.search))];
+  const todo = [];
+  let skipped = 0;
+  for (const keyword of searches) {
+    const group = courses.filter((c) => c.search === keyword);
+    const listConfig = Object.assign(config, {
+      searchKeyword: keyword,
+      titleFilter: new RegExp(group.map((c) => `(?:${c.title.source})`).join('|'), 'i'),
+    });
+    console.log(`🔎 학습자료 검색: "${keyword}"`);
+    for (const item of await collectItems(page, listConfig)) {
+      const course = group.find((c) => c.title.test(item.title));
+      if (!course) continue;
+      const dir = path.join(baseDir, course.folder);
+      if (!opts.force && ((await alreadySaved(dir, item.title)) || (opts.dryRun && (await alreadySaved(baseDir, item.title))))) {
+        skipped += 1;
+        continue;
+      }
+      todo.push({ item, course, dir, keyword, titleFilter: listConfig.titleFilter });
+    }
+  }
+
+  console.log(`\n📋 이미 받은 교안 ${skipped}개, 새 교안 ${todo.length}개`);
+  for (const course of courses) {
+    const titles = todo.filter((t) => t.course === course).map((t) => t.item.title);
+    if (titles.length) console.log(`   [${course.folder}]\n${titles.map((t) => `     - ${t}`).join('\n')}`);
+  }
+  if (todo.length === 0 || opts.dryRun) return;
+
+  let ok = 0;
+  for (const [i, t] of todo.entries()) {
+    console.log(`\n[${i + 1}/${todo.length}] ${t.course.folder} / ${t.item.title}`);
+    const itemConfig = Object.assign(Object.create(config), {
+      outputDir: t.dir, searchKeyword: t.keyword, titleFilter: t.titleFilter,
+    });
+    try {
+      await fs.mkdir(t.dir, { recursive: true });
+      await saveItem(page, context, itemConfig, t.item, { force: opts.force });
+      ok += 1;
+    } catch (err) {
+      console.error(`❌ ${err.message}`);
+    }
+  }
+  console.log(`\n완료: 새 교안 ${ok}/${todo.length}개 저장  →  ${baseDir}`);
+}
+
 export async function runMaterials(context, page, config, opts) {
   console.log(`🔎 학습자료 검색: "${config.searchKeyword}"  /  제목 필터: ${config.titleFilter}`);
   const items = await collectItems(page, config);

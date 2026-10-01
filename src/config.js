@@ -27,6 +27,7 @@ export function loadConfig() {
     browserChannel: env('BROWSER_CHANNEL'),
     browserExecutablePath: env('BROWSER_EXECUTABLE_PATH'),
     authStatePath: path.resolve('.auth/state.json'),
+    coursesFile: path.resolve(env('COURSES_FILE', 'courses.json')),
   };
 
   if (!config.id || !config.password) {
