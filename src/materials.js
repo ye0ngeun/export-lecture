@@ -199,40 +199,94 @@ async function saveDownload(download, config, title) {
   console.log(`💾 첨부파일 저장: ${outPath}`);
 }
 
-/** 항목 하나 처리: 제목 클릭 → (뷰어 바로 열림 | 상세 페이지 → 교재 버튼) → PDF 저장 */
+/**
+ * 상세 페이지의 eBook 링크들에 data-export-ebook 표시를 붙이고 각 링크 글자를 돌려준다.
+ * SSAFY 상세 화면은 "eBook(1)" 제목 아래에 <a href="#none"><span class="file-name">제목</span></a> 형태.
+ */
+async function markEbookLinks(detail) {
+  return evaluateSafe(detail, () => {
+    document.querySelectorAll('[data-export-ebook]').forEach((el) => el.removeAttribute('data-export-ebook'));
+    const clickable = (el) => el.closest('a, button, [onclick], [role="button"]') || el;
+    // "eBook(1)", "첨부파일(2)" 같은 구역 제목 중 문서 순서상 바로 앞의 것이 eBook 이면 eBook 링크로 본다.
+    const fileNames = Array.from(document.querySelectorAll('.file-name'));
+    const headers = Array.from(document.querySelectorAll('body *')).filter((el) =>
+      el.children.length === 0 &&
+      !el.closest('.file-name') &&
+      /^\s*[^()]{1,20}\(\s*\d+\s*\)\s*$/.test(el.textContent || ''));
+    const sectionOf = (el) => {
+      let last = null;
+      for (const h of headers) {
+        if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) last = h;
+      }
+      return last ? last.textContent : '';
+    };
+    let picked = fileNames.filter((el) => /e-?book/i.test(sectionOf(el)));
+    if (picked.length === 0) picked = fileNames;
+
+    const titles = [];
+    picked.forEach((el, i) => {
+      clickable(el).setAttribute('data-export-ebook', String(i));
+      titles.push((el.textContent || '').replace(/\s+/g, ' ').trim());
+    });
+    return titles;
+  });
+}
+
+/** 상세 페이지의 링크 하나를 눌러 뷰어를 열고 PDF 로 저장한다. */
+async function openEbookFromDetail(detail, context, config, locator, title, opts) {
+  const result = await clickAndFollow(detail, context, locator);
+  if (result.download) return saveDownload(result.download, config, title);
+  const viewer = result.popup ?? detail;
+  const seen = result.popup ? trackPageImages(result.popup) : result.seenSame;
+  try {
+    await saveEbookAsPdf(viewer, context, config, { seen, titleHint: title, ...opts });
+  } finally {
+    if (result.popup) await result.popup.close().catch(() => {});
+  }
+  // 같은 탭에서 뷰어로 넘어갔으면 상세 페이지로 돌아온다.
+  if (!result.popup) await detail.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+}
+
+/** 항목 하나 처리: 제목 클릭 → (뷰어 바로 열림 | 상세 페이지 → eBook 링크) → PDF 저장 */
 async function saveItem(page, context, config, item, opts) {
   const target = await revealItem(page, config, item);
   const first = await clickAndFollow(page, context, target);
   if (first.download) return saveDownload(first.download, config, item.title);
 
-  let viewer = first.popup ?? page;
-  let seen = first.popup ? trackPageImages(first.popup) : first.seenSame;
-  const extraPages = first.popup ? [first.popup] : [];
+  const detail = first.popup ?? page;
+  const seen = first.popup ? trackPageImages(first.popup) : first.seenSame;
 
   try {
-    if (!(await waitForViewer(viewer, seen, 5_000))) {
-      // 상세 페이지: 교재/e-book 버튼을 눌러 뷰어를 연다
-      await dumpDebug(viewer, config, `02_상세_${item.title}`);
-      const button = viewer
+    if (await waitForViewer(detail, seen, 3_000)) {
+      await saveEbookAsPdf(detail, context, config, { seen, titleHint: item.title, ...opts });
+      return;
+    }
+
+    await dumpDebug(detail, config, `02_상세_${item.title}`);
+    const ebookTitles = await markEbookLinks(detail);
+
+    if (ebookTitles.length === 0) {
+      // .file-name 이 없는 화면이면 버튼 글자로 찾아 본다.
+      const button = detail
         .locator('a, button, [onclick], [role="button"]', { hasText: EBOOK_BUTTON_PATTERN })
         .filter({ hasNotText: /다시\s*보기|목록|이전|다음/ })
         .first();
       if (!(await button.isVisible().catch(() => false))) {
-        throw new Error('상세 페이지에서 교재(e-book) 버튼을 찾지 못했습니다. (--debug 로 화면을 저장해 보내 주세요)');
+        throw new Error('상세 페이지에서 eBook 링크를 찾지 못했습니다. (--debug 로 화면을 저장해 보내 주세요)');
       }
-      const second = await clickAndFollow(viewer, context, button);
-      if (second.download) return saveDownload(second.download, config, item.title);
-      if (second.popup) {
-        extraPages.push(second.popup);
-        viewer = second.popup;
-        seen = trackPageImages(second.popup);
-      } else {
-        seen = second.seenSame;
-      }
+      await openEbookFromDetail(detail, context, config, button, item.title, opts);
+      return;
     }
-    await saveEbookAsPdf(viewer, context, config, { seen, titleHint: item.title, ...opts });
+
+    if (ebookTitles.length > 1) console.log(`   eBook ${ebookTitles.length}개`);
+    for (const [i, ebookTitle] of ebookTitles.entries()) {
+      // eBook 이 하나면 학습자료 제목을, 여러 개면 각 eBook 이름을 파일 이름으로 쓴다 (여러 개면 "학습자료 제목 - eBook 이름").
+      const title = ebookTitles.length === 1 ? item.title : `${item.title} - ${ebookTitle || i + 1}`;
+      if (!(await detail.locator(`[data-export-ebook="${i}"]`).count())) await markEbookLinks(detail);
+      await openEbookFromDetail(detail, context, config, detail.locator(`[data-export-ebook="${i}"]`), title, opts);
+    }
   } finally {
-    for (const p of extraPages) await p.close().catch(() => {});
+    if (first.popup) await first.popup.close().catch(() => {});
     page.removeAllListeners('request');
   }
 }
