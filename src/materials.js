@@ -85,10 +85,20 @@ async function markItems(page, filter) {
     // 가장 안쪽 요소만 (자식 중에 또 맞는 게 있으면 제외)
     const innermost = matches.filter((el) => !matches.some((o) => o !== el && el.contains(o)));
 
+    // 각 항목에는 제목(링크)과 그 아래 설명 줄이 있는데, 설명 줄은 글자가 조금 다를 수 있다
+    // (예: 제목 "..._0929_2" / 설명 "..._0929-2"). 클릭 가능한 요소 안에 있는 것만 항목으로 세고,
+    // 같은 링크를 공유하면 처음 것(제목)만 쓴다.
+    const clickableOf = (el) => el.closest('a, button, [onclick], [role="button"]');
+    const linked = innermost.filter((el) => clickableOf(el));
+    const candidates = linked.length > 0 ? linked : innermost;
+
     const titles = [];
-    for (const el of innermost) {
+    const usedClickables = new Set();
+    for (const el of candidates) {
       const title = clean(el.textContent || '');
-      if (titles.includes(title)) continue;
+      const clickable = clickableOf(el);
+      if (titles.includes(title) || (clickable && usedClickables.has(clickable))) continue;
+      if (clickable) usedClickables.add(clickable);
       el.setAttribute('data-export-item', String(titles.length));
       titles.push(title);
     }
