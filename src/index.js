@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
 import { launchBrowser, createLoggedInContext } from './browser.js';
 import { saveEbookAsPdf, trackPageImages } from './ebook.js';
 import { runMaterials } from './materials.js';
 import { evaluateSafe } from './evaluate.js';
-import { isPageImageUrl, parsePageImageUrl } from './pattern.js';
+import { isPageImageUrl, parsePageImageUrl, sanitizeFileName } from './pattern.js';
 
 const HELP = `
 사용법: npm start -- [옵션]
@@ -23,6 +24,7 @@ const HELP = `
 
 기타
   --headed            브라우저 창을 띄워서 실행 (디버깅용)
+  --folder <이름>      downloads 아래 이 이름의 폴더에 저장 (예: --folder 프론트엔드)
   --force             이미 받은 교안도 다시 받기
   --logout            저장된 로그인 세션 삭제 후 다시 로그인
   --debug             목록/상세 화면을 downloads/_debug 에 HTML·스크린샷으로 저장
@@ -198,6 +200,7 @@ async function main() {
       title: { type: 'string' },
       'dry-run': { type: 'boolean' },
       debug: { type: 'boolean' },
+      folder: { type: 'string' },
       watch: { type: 'boolean' },
       headed: { type: 'boolean' },
       force: { type: 'boolean' },
@@ -220,6 +223,7 @@ async function main() {
   if (values.keyword) config.searchKeyword = values.keyword;
   if (values.title) config.titleFilter = new RegExp(values.title, 'i');
   config.debug = Boolean(values.debug);
+  if (values.folder) config.outputDir = path.join(config.outputDir, sanitizeFileName(values.folder));
 
   const interactive = Boolean(values.watch || values.headed);
   const browser = await launchBrowser(config, { headless: interactive ? false : config.headless });
