@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { launchBrowser, createLoggedInContext } from './browser.js';
 import { saveEbookAsPdf, trackPageImages } from './ebook.js';
 import { runMaterials } from './materials.js';
+import { evaluateSafe } from './evaluate.js';
 import { isPageImageUrl, parsePageImageUrl } from './pattern.js';
 
 const HELP = `
@@ -76,7 +77,7 @@ async function runDiscover(context, page, config, opts) {
   await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
 
   // 교안 버튼 후보: 텍스트가 EBOOK_LINK_PATTERN 과 맞는 a / button / onclick 요소
-  const markCandidates = async () => page.evaluate(({ linkSrc, linkFlags, filterSrc, filterFlags }) => {
+  const markCandidates = async () => evaluateSafe(page, ({ linkSrc, linkFlags, filterSrc, filterFlags }) => {
     const linkRe = new RegExp(linkSrc, linkFlags);
     const filterRe = filterSrc ? new RegExp(filterSrc, filterFlags) : null;
     const nodes = Array.from(document.querySelectorAll('a, button, [onclick], [role="button"]'));

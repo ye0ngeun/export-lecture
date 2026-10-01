@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { evaluateSafe } from './evaluate.js';
 import { imagesToPdf, isJpeg, isPng } from './pdf.js';
 import { isPageImageUrl, parsePageImageUrl, parseTotalPages, sanitizeFileName } from './pattern.js';
 
@@ -24,7 +25,7 @@ async function evaluateInFrames(page, fn) {
   const results = [];
   for (const frame of page.frames()) {
     try {
-      results.push(await frame.evaluate(fn));
+      results.push(await evaluateSafe(frame, fn));
     } catch {
       // 다른 출처 iframe 이거나 이미 사라진 frame
     }

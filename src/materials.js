@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { saveEbookAsPdf, trackPageImages } from './ebook.js';
+import { evaluateSafe } from './evaluate.js';
 import { isPageImageUrl, sanitizeFileName } from './pattern.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,7 +73,7 @@ async function search(page, keyword) {
  * 같은 제목이 설명 줄에 한 번 더 나오므로 처음 나온 것만 쓴다.
  */
 async function markItems(page, filter) {
-  return page.evaluate(({ src, flags }) => {
+  return evaluateSafe(page, ({ src, flags }) => {
     const re = new RegExp(src, flags);
     const clean = (t) => t.replace(/\s+/g, ' ').replace(/\s*교재\s*$/, '').trim();
     document.querySelectorAll('[data-export-item]').forEach((el) => el.removeAttribute('data-export-item'));
@@ -160,8 +161,8 @@ async function revealItem(page, config, item) {
 async function waitForViewer(target, seen, ms) {
   for (let waited = 0; waited < ms; waited += 500) {
     if (seen.size > 0) return true;
-    const found = await target.evaluate(
-      () => performance.getEntriesByType('resource').map((e) => e.name)
+    const found = await evaluateSafe(
+      target, () => performance.getEntriesByType('resource').map((e) => e.name)
     ).catch(() => []);
     if (found.some(isPageImageUrl)) return true;
     await sleep(500);
