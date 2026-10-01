@@ -4,12 +4,17 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
 import { launchBrowser, createLoggedInContext } from './browser.js';
 import { saveEbookAsPdf, trackPageImages } from './ebook.js';
+import { runMaterials } from './materials.js';
 import { isPageImageUrl, parsePageImageUrl } from './pattern.js';
 
 const HELP = `
 사용법: npm start -- [옵션]
 
 모드 (하나 선택)
+  --materials         학습자료에서 검색 → 제목 필터에 맞는 교안을 전부 PDF 로 저장
+                        --keyword <검색어>   (기본: .env SEARCH_KEYWORD, 자바전공)
+                        --title <정규식>     (기본: .env TITLE_FILTER, ^16기_자바전공_APS)
+                        --dry-run            받지 않고 대상 목록만 출력
   --url <주소>        e-book 뷰어 주소를 직접 지정 (여러 번 사용 가능)
   --urls <파일>       뷰어 주소 목록 파일 (한 줄에 "주소 [제목]", # 주석 가능)
   --discover          .env 의 LECTURE_LIST_URL 페이지에서 교안 링크를 찾아 전부 받기
@@ -19,6 +24,7 @@ const HELP = `
   --headed            브라우저 창을 띄워서 실행 (디버깅용)
   --force             이미 받은 교안도 다시 받기
   --logout            저장된 로그인 세션 삭제 후 다시 로그인
+  --debug             목록/상세 화면을 downloads/_debug 에 HTML·스크린샷으로 저장
   -h, --help          도움말
 `;
 
@@ -186,6 +192,11 @@ async function main() {
       url: { type: 'string', multiple: true },
       urls: { type: 'string' },
       discover: { type: 'boolean' },
+      materials: { type: 'boolean' },
+      keyword: { type: 'string' },
+      title: { type: 'string' },
+      'dry-run': { type: 'boolean' },
+      debug: { type: 'boolean' },
       watch: { type: 'boolean' },
       headed: { type: 'boolean' },
       force: { type: 'boolean' },
@@ -198,13 +209,16 @@ async function main() {
     ...(values.url ?? []).map((url) => ({ url, title: '' })),
     ...(values.urls ? await readUrlFile(values.urls) : []),
   ];
-  if (values.help || (!urls.length && !values.discover && !values.watch)) {
+  if (values.help || (!urls.length && !values.discover && !values.watch && !values.materials)) {
     console.log(HELP);
     return;
   }
 
   const config = loadConfig();
   if (values.logout) await fs.rm(config.authStatePath, { force: true });
+  if (values.keyword) config.searchKeyword = values.keyword;
+  if (values.title) config.titleFilter = new RegExp(values.title, 'i');
+  config.debug = Boolean(values.debug);
 
   const interactive = Boolean(values.watch || values.headed);
   const browser = await launchBrowser(config, { headless: interactive ? false : config.headless });
@@ -213,6 +227,7 @@ async function main() {
   try {
     const { context, page } = await createLoggedInContext(browser, config, { interactive });
     if (values.watch) await runWatch(context, page, config, opts);
+    else if (values.materials) await runMaterials(context, page, config, { ...opts, dryRun: Boolean(values['dry-run']) });
     else if (values.discover) await runDiscover(context, page, config, opts);
     else await runUrls(context, config, urls, opts);
     await context.storageState({ path: config.authStatePath }).catch(() => {});

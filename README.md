@@ -27,7 +27,33 @@ cp .env.example .env   # 그다음 SSAFY_ID / SSAFY_PASSWORD 입력
 
 ## 사용법
 
-### 1) 감시 모드: 가장 확실한 방법
+### 0) 학습자료에서 한 번에 받기 (추천)
+
+강의실 > 학습자료 페이지에서 검색하고, 제목이 조건과 맞는 교안을 전부 받습니다.
+
+```bash
+npm run materials -- --dry-run   # 받을 목록만 먼저 확인
+npm run materials                # 실제로 받기
+```
+
+기본값은 `.env`에서 바꿀 수 있습니다.
+
+```env
+SEARCH_KEYWORD=자바전공          # 학습자료 검색창에 넣을 검색어
+TITLE_FILTER=^16기_자바전공_APS  # 이 정규식과 맞는 제목만 (^ 는 "~로 시작")
+```
+
+한 번만 다르게 받고 싶으면 명령줄에서 바꿉니다.
+
+```bash
+npm run materials -- --title "^16기_자바전공_(?!APS)"   # APS가 아닌 자바전공 교안
+npm run materials -- --title "^16기_자바전공"           # 16기 자바전공 전부
+```
+
+동작 순서는 학습자료 페이지 → 검색 → 목록 전체 페이지 확인 → 제목 클릭 → (상세 화면이면 "교재" 버튼 클릭) → 뷰어 → PDF입니다.
+이미 받은 제목은 건너뜁니다. 잘 안 되면 `--debug`를 붙여서 실행하고 `downloads/_debug/`의 HTML과 스크린샷을 보내 주세요.
+
+### 1) 감시 모드
 
 ```bash
 npm run watch
@@ -74,6 +100,7 @@ https://edu.ssafy.com/....  Java 2일차 상속
 | `--headed` | 브라우저 창을 띄워서 실행합니다. 동작을 눈으로 확인할 때 씁니다. |
 | `--force` | 이미 받은 교안도 다시 받습니다. |
 | `--logout` | 저장된 세션을 지우고 다시 로그인합니다. |
+| `--debug` | 목록/상세 화면을 `downloads/_debug/`에 HTML과 스크린샷으로 저장합니다. |
 
 ## 문제 해결
 

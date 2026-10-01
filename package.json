@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "watch": "node src/index.js --watch",
+    "materials": "node src/index.js --materials",
     "setup": "npx playwright install chromium",
     "test": "node --test"
   },
