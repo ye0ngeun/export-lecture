@@ -1,0 +1,8 @@
+{
+  "search": "자바전공",
+  "courses": [
+    { "folder": "알고리즘", "title": "^16기_자바전공_APS" },
+    { "folder": "프론트엔드", "title": "^\\d+_자바전공_" },
+    { "folder": "AI", "title": "^\\d+-\\d+_", "search": "" }
+  ]
+}
