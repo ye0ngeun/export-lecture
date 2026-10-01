@@ -1,0 +1,24 @@
+{
+  "name": "export-lecture",
+  "version": "1.0.0",
+  "description": "SSAFY 강의 교안(e-book)을 자동으로 로그인 → 이미지 수집 → PDF로 저장하는 도구",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "export-lecture": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "watch": "node src/index.js --watch",
+    "setup": "npx playwright install chromium",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.55.0"
+  }
+}
