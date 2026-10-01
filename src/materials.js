@@ -329,7 +329,8 @@ async function loadCourses(file) {
   return raw.courses.map((c) => ({
     folder: sanitizeFileName(c.folder),
     title: new RegExp(c.title, 'i'),
-    search: c.search || raw.search || '',
+    // "search": "" 이면 검색 없이 전체 목록을 훑는다.
+    search: c.search ?? raw.search ?? '',
   }));
 }
 
@@ -369,7 +370,7 @@ export async function runSync(context, page, config, opts) {
       searchKeyword: keyword,
       titleFilter: new RegExp(group.map((c) => `(?:${c.title.source})`).join('|'), 'i'),
     });
-    console.log(`🔎 학습자료 검색: "${keyword}"`);
+    console.log(keyword ? `🔎 학습자료 검색: "${keyword}"` : '🔎 학습자료 전체 목록 확인 (검색어 없음)');
     for (const item of await collectItems(page, listConfig)) {
       const course = group.find((c) => c.title.test(item.title));
       if (!course) continue;
